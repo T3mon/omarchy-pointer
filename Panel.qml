@@ -15,7 +15,10 @@ Panel {
   property var state: Model.emptyState()
   property string tab: "mouse"
   property string target: "all"
+  property var moreOpen: ({})
 
+  property var rows: []
+  property string rowsSig: ""
   property real wheelAccumulator: 0
   property bool persistQueued: false
   property bool liveQueued: false
@@ -26,7 +29,6 @@ Panel {
   property bool cursorActive: false
 
   readonly property string activeTab: root.tab === "touchpad" && !root.state.hasTouchpad ? "mouse" : root.tab
-  readonly property var rows: Model.layout(root.activeTab, root.target, root.state)
   readonly property var targets: Model.focusTargets(root.rows)
   readonly property string applyPath: {
     var url = String(Qt.resolvedUrl("apply.py"))
@@ -34,8 +36,25 @@ Panel {
     try { return decodeURIComponent(url) } catch (e) { return url }
   }
   readonly property string glyph: root.activeTab === "touchpad" ? "󰟸" : (root.activeTab === "cursor" ? "󰆽" : "󰍽")
+  readonly property color muted: Qt.darker(root.bar.foreground, 1.4)
+  readonly property real controlWidth: Math.round(panelColumn.width * 0.56)
 
   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
+  function rebuildRows() {
+    if (root.dragging) return
+    var next = Model.layout(root.activeTab, root.target, root.state, root.moreOpen)
+    var sig = JSON.stringify(next)
+    if (sig === root.rowsSig) return
+    root.rowsSig = sig
+    root.rows = next
+  }
+
+  onStateChanged: rebuildRows()
+  onActiveTabChanged: rebuildRows()
+  onTargetChanged: rebuildRows()
+  onMoreOpenChanged: rebuildRows()
+  onDraggingChanged: rebuildRows()
 
   function value(id) {
     if (id === "tab") return root.activeTab
@@ -57,32 +76,36 @@ Panel {
     return []
   }
 
+  function tr(key, arg) {
+    var s = strings.t(key || "")
+    return s.indexOf("%1") >= 0 ? s.arg(arg === undefined ? "" : arg) : s
+  }
+
   function translated(options) {
-    return options.map(function(o) { return { value: o.value, label: strings.t(o.labelKey) } })
+    return (options || []).map(function(o) { return { value: o.value, label: strings.t(o.labelKey) } })
   }
 
   function sliderLabel(id, v) {
     var t = Model.sliderText(id, v, Commons.I18n.formatNumber)
-    return strings.t(t.key).arg(t.arg)
+    return root.tr(t.key, t.arg)
   }
 
   function heroMeta() {
     var s = root.state
     if (root.activeTab === "cursor") {
-      return [strings.t("tab.cursor").toUpperCase(),
-              root.sliderLabel("c.size", s.cursor.size),
-              (s.cursor.theme === "default" ? strings.t("theme.default") : s.cursor.theme).toUpperCase()].join(" · ")
+      return [root.sliderLabel("c.size", s.cursor.size),
+              (s.cursor.theme === "default" ? strings.t("theme.default") : s.cursor.theme)].join(" · ").toUpperCase()
     }
     var prefix = root.activeTab === "touchpad" ? "t" : "m"
     var name = root.activeTab === "touchpad" ? strings.t("tab.touchpad")
       : (root.target === "all" ? strings.t("target.all") : root.target)
-    var parts = [name.toUpperCase()]
+    var parts = [name]
     var speedId = Model.speedId(root.activeTab, root.target, s)
     if (speedId) {
-      parts.push(strings.t("accel." + Model.rawValue(s, root.target, prefix + ".accel")).toUpperCase())
+      parts.push(strings.t("accel." + Model.rawValue(s, root.target, prefix + ".accel")))
       parts.push(root.sliderLabel(speedId, root.value(speedId)))
     }
-    return parts.join(" · ")
+    return parts.join(" · ").toUpperCase()
   }
 
   function applyParsed(parsed) {
@@ -115,13 +138,26 @@ Panel {
   function setValue(id, v, mode) {
     if (id === "tab") { root.tab = v; return }
     if (id === "m.target") { root.target = v; return }
-    root.state = Model.withValue(root.state, root.target, id, v)
     root.dragging = mode === "live"
+    root.state = Model.withValue(root.state, root.target, id, v)
     queueApply(mode || "apply")
   }
 
   function toggleValue(id) {
     setValue(id, !root.value(id))
+  }
+
+  function toggleMore(id) {
+    var tab = id.replace("more.", "")
+    var row = root.rows.filter(function(r) { return r.id === id })[0]
+    var next = {}
+    for (var k in root.moreOpen) next[k] = root.moreOpen[k]
+    next[tab] = !(row && row.open)
+    root.moreOpen = next
+  }
+
+  function runAction(id) {
+    if (id === "c.zoom.reset") setValue("c.zoom", 1)
   }
 
   function focusTarget() {
@@ -136,12 +172,7 @@ Panel {
   }
 
   function choiceOptions(id) {
-    for (var i = 0; i < root.rows.length; i++) {
-      var row = root.rows[i]
-      if (row.type === "choice" && row.id === id) return row.options
-      if (row.type === "pair")
-        for (var j = 0; j < row.items.length; j++) if (row.items[j].id === id) return row.items[j].options
-    }
+    for (var i = 0; i < root.rows.length; i++) if (root.rows[i].id === id) return root.rows[i].options || []
     return []
   }
 
@@ -163,8 +194,7 @@ Panel {
     var t = focusTarget()
     if (!t) return
     if (t.kind === "slider") {
-      var spec = Model.sliderSpec(t.id)
-      setValue(t.id, Number(root.value(t.id)) + delta * spec.step)
+      setValue(t.id, Number(root.value(t.id)) + delta * Model.sliderSpec(t.id).step)
     } else if (t.kind === "choice") {
       root.selectedIndex = Math.max(0, Math.min(t.count - 1, root.selectedIndex + delta))
     } else if (t.kind === "dropdown") {
@@ -176,6 +206,8 @@ Panel {
     var t = focusTarget()
     if (!t) return
     if (t.kind === "toggle") toggleValue(t.id)
+    else if (t.kind === "more") toggleMore(t.id)
+    else if (t.kind === "action") runAction(t.id)
     else if (t.kind === "choice") {
       var options = root.choiceOptions(t.id)
       if (root.selectedIndex >= 0 && root.selectedIndex < options.length) setValue(t.id, options[root.selectedIndex].value)
@@ -207,11 +239,12 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  Component.onCompleted: refresh()
+  Component.onCompleted: { rebuildRows(); refresh() }
 
   onOpenedChanged: {
     if (!opened) return
     refresh()
+    root.moreOpen = ({})
     root.focusId = "tab"
     root.selectedIndex = 0
     root.cursorActive = false
@@ -258,7 +291,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(720))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(1000))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -287,7 +320,7 @@ Panel {
         Column {
           id: panelColumn
           width: scrollArea.availableWidth
-          spacing: Style.space(8)
+          spacing: Style.space(6)
 
           PanelHero {
             width: parent.width
@@ -308,12 +341,14 @@ Panel {
               property var row: modelData
               sourceComponent: {
                 switch (modelData.type) {
+                case "tabs": return tabsRow
+                case "section": return sectionRow
                 case "slider": return sliderRow
                 case "choice": return choiceRow
-                case "pair": return pairRow
-                case "toggles": return togglesRow
+                case "switch": return switchRow
                 case "dropdown": return dropdownRow
-                case "header": return headerRow
+                case "more": return moreRow
+                case "warning": return warningRow
                 case "note": return noteRow
                 }
                 return null
@@ -337,76 +372,206 @@ Panel {
   }
 
   Component {
+    id: tabsRow
+    Segmented {
+      width: parent ? parent.width : 0
+      sid: "tab"
+      options: root.translated(parent ? parent.row.options : [])
+      fontSize: Style.font.body
+      padY: Style.space(6)
+    }
+  }
+
+  Component {
+    id: sectionRow
+    Column {
+      property var row: parent ? parent.row : ({})
+      width: parent ? parent.width : 0
+      topPadding: Style.space(8)
+      spacing: Style.space(8)
+      PanelSeparator { foreground: root.bar.foreground }
+      PanelSectionHeader {
+        leftPadding: Style.space(6)
+        text: strings.t(parent.row.labelKey || "")
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+      }
+    }
+  }
+
+  Component {
     id: sliderRow
-    SliderSection {
+    Column {
+      id: sliderSection
+      property var row: parent ? parent.row : ({})
+      readonly property string sid: row.id || ""
+      readonly property var spec: Model.sliderSpec(sid)
       width: parent ? parent.width : 0
-      row: parent ? parent.row : ({})
-    }
-  }
+      spacing: Style.space(2)
 
-  Component {
-    id: choiceRow
-    ChoiceSection {
-      width: parent ? parent.width : 0
-      row: parent ? parent.row : ({ options: [] })
-    }
-  }
+      Item {
+        width: parent.width
+        implicitHeight: Math.max(label.implicitHeight, valueLabel.implicitHeight)
+        RowLabel {
+          id: label
+          anchors.left: parent.left
+          anchors.leftMargin: Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+          text: strings.t(sliderSection.row.labelKey || "")
+        }
+        Text {
+          id: valueLabel
+          textFormat: Text.PlainText
+          text: root.sliderLabel(sliderSection.sid, slider.dragging ? slider.liveValue : root.value(sliderSection.sid))
+          color: root.muted
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(6)
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
 
-  Component {
-    id: pairRow
-    Row {
-      id: pair
-      property var row: parent ? parent.row : ({ items: [] })
-      width: parent ? parent.width : 0
-      spacing: Style.space(10)
-      Repeater {
-        model: pair.row.items
-        ChoiceSection {
-          required property var modelData
-          width: (pair.width - pair.spacing) / 2
-          row: modelData
+      CursorSurface {
+        id: sliderBox
+        width: parent.width
+        height: slider.implicitHeight
+        hasCursor: root.hasCursor(sliderSection.sid)
+        onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderBox)
+        foreground: root.bar.foreground
+        outline: true
+
+        PanelSlider {
+          id: slider
+          bar: root.bar
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(6)
+          anchors.rightMargin: Style.space(6)
+          minimum: sliderSection.spec.min
+          maximum: sliderSection.spec.max
+          step: sliderSection.spec.step
+          integer: sliderSection.spec.integer
+          value: Number(root.value(sliderSection.sid))
+          onMoved: function(v) { root.setValue(sliderSection.sid, v, "live") }
+          onReleased: function(v) { root.setValue(sliderSection.sid, v, "apply") }
+        }
+
+        HoverHandler {
+          onHoveredChanged: if (hovered) root.focusOn(sliderSection.sid, 0)
         }
       }
     }
   }
 
   Component {
-    id: togglesRow
-    Grid {
-      id: grid
-      property var row: parent ? parent.row : ({ items: [] })
+    id: choiceRow
+    Item {
+      id: choiceItem
+      property var row: parent ? parent.row : ({})
       width: parent ? parent.width : 0
-      columns: 2
-      columnSpacing: Style.space(8)
-      rowSpacing: Style.space(4)
-      readonly property real cellWidth: (width - columnSpacing) / 2
-      Repeater {
-        model: grid.row.items
-        CompactToggle {
-          required property var modelData
-          width: grid.cellWidth
-          toggleId: modelData.id
-          label: strings.t(modelData.labelKey)
+      implicitHeight: Math.max(Style.space(30), seg.implicitHeight)
+      RowLabel {
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(6)
+        anchors.right: seg.left
+        anchors.rightMargin: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        text: strings.t(choiceItem.row.labelKey || "")
+      }
+      Segmented {
+        id: seg
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        width: root.controlWidth
+        sid: choiceItem.row.id || ""
+        options: root.translated(choiceItem.row.options)
+      }
+    }
+  }
+
+  Component {
+    id: switchRow
+    CursorSurface {
+      id: sw
+      property var row: parent ? parent.row : ({})
+      readonly property string sid: row.id || ""
+      readonly property bool checked: root.value(sid) === true
+      width: parent ? parent.width : 0
+      height: Math.max(Style.space(30), textCol.implicitHeight + Style.space(8))
+      radius: Style.cornerRadius
+      foreground: root.bar.foreground
+      hasCursor: root.hasCursor(sid) || area.containsMouse
+      onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sw)
+
+      Column {
+        id: textCol
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(6)
+        anchors.right: toggle.left
+        anchors.rightMargin: Style.space(10)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(1)
+        RowLabel {
+          width: parent.width
+          text: strings.t(sw.row.labelKey || "")
         }
+        Text {
+          width: parent.width
+          visible: !!sw.row.captionKey
+          textFormat: Text.PlainText
+          wrapMode: Text.WordWrap
+          text: sw.row.captionKey ? strings.t(sw.row.captionKey) : ""
+          color: root.muted
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      ToggleSwitch {
+        id: toggle
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        checked: sw.checked
+        interactive: false
+        trackHeight: Style.space(16)
+        foreground: root.bar.foreground
+        accent: Color.accent
+      }
+
+      MouseArea {
+        id: area
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: root.focusOn(sw.sid, 0)
+        onClicked: root.toggleValue(sw.sid)
       }
     }
   }
 
   Component {
     id: dropdownRow
-    Column {
+    Item {
       id: dd
       property var row: parent ? parent.row : ({})
       width: parent ? parent.width : 0
-      spacing: Style.space(4)
-      PanelSectionHeader {
+      implicitHeight: dropdown.implicitHeight
+      RowLabel {
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(6)
+        anchors.right: dropdown.left
+        anchors.rightMargin: Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
         text: strings.t(dd.row.labelKey || "")
-        foreground: root.bar.foreground
-        fontFamily: root.bar.fontFamily
       }
       Dropdown {
         id: dropdown
-        width: dd.width
+        anchors.right: parent.right
+        anchors.rightMargin: Style.space(6)
+        width: root.controlWidth
         showLabel: false
         fontFamily: root.bar.fontFamily
         options: root.optionList(dd.row.id)
@@ -420,13 +585,98 @@ Panel {
   }
 
   Component {
-    id: headerRow
-    PanelSectionHeader {
+    id: moreRow
+    CursorSurface {
+      id: moreItem
       property var row: parent ? parent.row : ({})
-      topPadding: Style.space(6)
-      text: strings.t(row.labelKey || "")
+      width: parent ? parent.width : 0
+      height: Style.space(30)
+      radius: Style.cornerRadius
       foreground: root.bar.foreground
-      fontFamily: root.bar.fontFamily
+      hasCursor: root.hasCursor(row.id || "") || moreArea.containsMouse
+      onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(moreItem)
+
+      Text {
+        anchors.left: parent.left
+        anchors.leftMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: (moreItem.row.open ? "\uf078   " : "\uf054   ") + strings.t(moreItem.row.labelKey || "")
+        color: root.muted
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+      }
+
+      MouseArea {
+        id: moreArea
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: root.focusOn(moreItem.row.id, 0)
+        onClicked: root.toggleMore(moreItem.row.id)
+      }
+    }
+  }
+
+  Component {
+    id: warningRow
+    Rectangle {
+      id: warn
+      property var row: parent ? parent.row : ({})
+      width: parent ? parent.width : 0
+      height: warnRow.implicitHeight + Style.space(12)
+      radius: Style.cornerRadius
+      color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.14)
+      border.width: 1
+      border.color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.5)
+
+      Row {
+        id: warnRow
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Style.space(8)
+        anchors.rightMargin: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(8)
+
+        Text {
+          id: warnIcon
+          textFormat: Text.PlainText
+          text: "\uf071"
+          color: Color.urgent
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Text {
+          width: parent.width - warnIcon.width - parent.spacing - (action.visible ? action.width + parent.spacing : 0)
+          textFormat: Text.PlainText
+          wrapMode: Text.WordWrap
+          text: root.tr(warn.row.labelKey, warn.row.arg)
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Button {
+          id: action
+          visible: !!warn.row.action
+          text: strings.t("action." + (warn.row.action || ""))
+          fontSize: Style.font.caption
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          horizontalPadding: Style.spacing.sm
+          verticalPadding: Style.space(3)
+          bordered: true
+          hasCursor: root.hasCursor(warn.row.action || "")
+          onClicked: root.runAction(warn.row.action)
+          onHovered: function(h) { if (h) root.focusOn(warn.row.action, 0) }
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
     }
   }
 
@@ -435,174 +685,55 @@ Panel {
     Text {
       property var row: parent ? parent.row : ({})
       width: parent ? parent.width : 0
+      leftPadding: Style.space(6)
+      rightPadding: Style.space(6)
       textFormat: Text.PlainText
       wrapMode: Text.WordWrap
-      text: strings.t(row.labelKey || "")
-      color: Qt.darker(root.bar.foreground, 1.4)
+      text: root.tr(row.labelKey, row.arg)
+      color: root.muted
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.caption
     }
   }
 
-  component SliderSection: Column {
-    id: sliderSection
-    property var row: ({})
-    readonly property string sid: row.id || ""
-    readonly property var spec: Model.sliderSpec(sid)
+  component RowLabel: Text {
+    textFormat: Text.PlainText
+    elide: Text.ElideRight
+    color: root.bar.foreground
+    font.family: root.bar.fontFamily
+    font.pixelSize: Style.font.body
+  }
 
-    spacing: Style.space(2)
+  component Segmented: Grid {
+    id: segmented
+    property string sid: ""
+    property var options: []
+    property real fontSize: Style.font.caption
+    property real padY: Style.space(4)
+    columns: Math.max(1, options.length)
+    spacing: Style.spacing.xs
+    readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
 
-    Item {
-      width: parent.width
-      implicitHeight: Math.max(header.implicitHeight, valueLabel.implicitHeight)
+    Repeater {
+      model: segmented.options
 
-      PanelSectionHeader {
-        id: header
-        text: strings.t(sliderSection.row.labelKey || "")
+      Button {
+        required property var modelData
+        required property int index
+        width: segmented.cellWidth
+        text: modelData.label
+        fontSize: segmented.fontSize
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
-        anchors.left: parent.left
-        anchors.verticalCenter: parent.verticalCenter
+        horizontalPadding: Style.space(4)
+        verticalPadding: segmented.padY
+        bordered: true
+        selected: String(root.value(segmented.sid)) === String(modelData.value)
+        hasCursor: root.hasCursor(segmented.sid, index)
+        onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(this)
+        onClicked: root.setValue(segmented.sid, modelData.value)
+        onHovered: function(isHovered) { if (isHovered) root.focusOn(segmented.sid, index) }
       }
-
-      Text {
-        id: valueLabel
-        textFormat: Text.PlainText
-        text: root.sliderLabel(sliderSection.sid, slider.dragging ? slider.liveValue : root.value(sliderSection.sid))
-        color: Qt.darker(root.bar.foreground, 1.4)
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(6)
-        anchors.verticalCenter: parent.verticalCenter
-      }
-    }
-
-    CursorSurface {
-      id: sliderBox
-      width: parent.width
-      height: slider.implicitHeight
-      hasCursor: root.hasCursor(sliderSection.sid)
-      onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderBox)
-      foreground: root.bar.foreground
-      outline: true
-
-      PanelSlider {
-        id: slider
-        bar: root.bar
-        anchors.fill: parent
-        anchors.leftMargin: Style.space(6)
-        anchors.rightMargin: Style.space(6)
-        minimum: sliderSection.spec.min
-        maximum: sliderSection.spec.max
-        step: sliderSection.spec.step
-        integer: sliderSection.spec.integer
-        value: Number(root.value(sliderSection.sid))
-        onMoved: function(v) { root.setValue(sliderSection.sid, v, "live") }
-        onReleased: function(v) { root.setValue(sliderSection.sid, v, "apply") }
-      }
-
-      HoverHandler {
-        onHoveredChanged: if (hovered) root.focusOn(sliderSection.sid, 0)
-      }
-    }
-  }
-
-  component ChoiceSection: Column {
-    id: choiceSection
-    property var row: ({ options: [] })
-    readonly property string cid: row.id || ""
-    readonly property var options: root.translated(row.options || [])
-
-    spacing: Style.space(4)
-
-    PanelSectionHeader {
-      text: strings.t(choiceSection.row.labelKey || "")
-      foreground: root.bar.foreground
-      fontFamily: root.bar.fontFamily
-    }
-
-    Grid {
-      id: choiceGrid
-      width: parent.width
-      columns: Math.max(1, choiceSection.options.length)
-      spacing: Style.spacing.xs
-      readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
-
-      Repeater {
-        model: choiceSection.options
-
-        Button {
-          required property var modelData
-          required property int index
-          width: choiceGrid.cellWidth
-          text: modelData.label
-          fontSize: Style.font.caption
-          foreground: root.bar.foreground
-          fontFamily: root.bar.fontFamily
-          horizontalPadding: Style.spacing.sm
-          verticalPadding: Style.space(4)
-          bordered: true
-          selected: String(root.value(choiceSection.cid)) === String(modelData.value)
-          hasCursor: root.hasCursor(choiceSection.cid, index)
-          onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(this)
-          onClicked: root.setValue(choiceSection.cid, modelData.value)
-          onHovered: function(isHovered) { if (isHovered) root.focusOn(choiceSection.cid, index) }
-        }
-      }
-    }
-  }
-
-  component CompactToggle: BorderSurface {
-    id: toggleRow
-    property string toggleId: ""
-    property string label: ""
-    readonly property bool checked: root.value(toggleId) === true
-
-    implicitHeight: Style.space(32)
-    radius: Style.cornerRadius
-    color: "transparent"
-    borderSpec: Border.controlSpec(
-      root.hasCursor(toggleId) || mouseArea.containsMouse ? "hover-cursor" : "normal",
-      root.bar.foreground, Color.accent)
-
-    Row {
-      anchors.fill: parent
-      anchors.leftMargin: Style.space(8)
-      anchors.rightMargin: Style.space(4)
-      spacing: Style.space(6)
-
-      Text {
-        textFormat: Text.PlainText
-        text: toggleRow.label
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-        elide: Text.ElideRight
-        width: parent.width - switchControl.implicitWidth - parent.spacing
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      ToggleSwitch {
-        id: switchControl
-        checked: toggleRow.checked
-        interactive: false
-        trackHeight: Style.space(16)
-        foreground: root.bar.foreground
-        accent: Color.accent
-        anchors.verticalCenter: parent.verticalCenter
-      }
-    }
-
-    MouseArea {
-      id: mouseArea
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onEntered: root.focusOn(toggleRow.toggleId, 0)
-      onClicked: root.toggleValue(toggleRow.toggleId)
     }
   }
 }

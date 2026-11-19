@@ -223,7 +223,7 @@ function sliderText(id, value, formatNumber) {
   if (kind === "speed" || kind === "scroll") return { key: "fmt.percent", arg: fmt(Math.round(value)) }
   if (id === "t.distance" || id === "c.size") return { key: "fmt.px", arg: fmt(Math.round(value)) }
   if (id === "c.hide") return Math.round(value) <= 0 ? { key: "fmt.never", arg: "" } : { key: "fmt.seconds", arg: fmt(Math.round(value)) }
-  if (id === "c.zoom") return { key: "fmt.zoom", arg: fmt(value, 1) }
+  if (id === "c.zoom") return Number(value) <= 1 ? { key: "fmt.off", arg: "" } : { key: "fmt.zoom", arg: fmt(value, 1) }
   return { key: "fmt.plain", arg: fmt(value) }
 }
 
@@ -232,7 +232,6 @@ function opt(value, labelKey) {
 }
 
 var OPTIONS = {
-  "tab": [opt("mouse", "tab.mouse"), opt("touchpad", "tab.touchpad"), opt("cursor", "tab.cursor")],
   "accel": [opt("adaptive", "accel.adaptive"), opt("flat", "accel.flat")],
   "primary": [opt("left", "primary.left"), opt("right", "primary.right")],
   "t.tapmap": [opt("lrm", "tapmap.lrm"), opt("lmr", "tapmap.lmr")],
@@ -242,70 +241,124 @@ var OPTIONS = {
   "c.focus": [opt("0", "focus.0"), opt("1", "focus.1"), opt("2", "focus.2")]
 }
 
-function optionsFor(id, hasTouchpad) {
-  if (id === "tab") return hasTouchpad ? OPTIONS.tab : [OPTIONS.tab[0], OPTIONS.tab[2]]
+function tabOptions(hasTouchpad) {
+  var list = [opt("mouse", "tab.mouse")]
+  if (hasTouchpad) list.push(opt("touchpad", "tab.touchpad"))
+  list.push(opt("cursor", "tab.cursor"))
+  return list
+}
+
+function optionsFor(id) {
   if (id === "m.accel" || id === "t.accel") return OPTIONS.accel
   if (id === "m.primary" || id === "t.primary") return OPTIONS.primary
   return OPTIONS[id] || []
 }
 
-function choice(id, labelKey, hasTouchpad) {
-  return { type: "choice", id: id, labelKey: labelKey, options: optionsFor(id, hasTouchpad) }
-}
+function header(labelKey) { return { type: "section", labelKey: labelKey } }
+function slider(id) { return { type: "slider", id: id, labelKey: "label." + id } }
+function choice(id) { return { type: "choice", id: id, labelKey: "label." + id, options: optionsFor(id) } }
+function toggle(id, caption) { return { type: "switch", id: id, labelKey: "label." + id, captionKey: caption ? "caption." + id : "" } }
+function warning(labelKey, arg, action) { return { type: "warning", labelKey: labelKey, arg: arg || "", action: action || "" } }
+function note(labelKey, arg) { return { type: "note", labelKey: labelKey, arg: arg || "" } }
+function more(tab, open) { return { type: "more", id: "more." + tab, labelKey: open ? "more.hide" : "more.show", open: open } }
 
-function slider(id, labelKey) {
-  return { type: "slider", id: id, labelKey: labelKey }
-}
-
-function toggles(ids) {
-  return { type: "toggles", items: ids.map(function(id) { return { id: id, labelKey: "toggle." + id } }) }
-}
-
-function pointerRows(prefix, hasTouchpad) {
-  return [
-    slider(prefix + ".speed", "section.speed"),
-    slider(prefix + ".scroll", "section.scroll"),
-    { type: "pair", items: [choice(prefix + ".accel", "section.accel", hasTouchpad), choice(prefix + ".primary", "section.primary", hasTouchpad)] }
-  ]
-}
-
-function layout(tab, target, state) {
-  var hasTouchpad = state.hasTouchpad
-  var rows = [choice("tab", "section.device", hasTouchpad)]
-  if (tab === "touchpad" && hasTouchpad) {
-    rows = rows.concat(pointerRows("t", hasTouchpad))
-    rows.push(toggles(["t.natural", "t.tap", "t.dwt", "t.clickfinger", "t.tapdrag", "t.draglock", "t.middle"]))
-    rows.push({ type: "pair", items: [choice("t.tapmap", "section.tapmap", hasTouchpad), choice("t.scrollmethod", "section.scrollmethod", hasTouchpad)] })
-    rows.push(choice("t.drag3fg", "section.drag3fg", hasTouchpad))
-    rows.push({ type: "header", labelKey: "section.gestures" })
-    rows.push(toggles(["t.gestures", "t.invert"]))
-    rows.push(choice("t.fingers", "section.fingers", hasTouchpad))
-    rows.push(slider("t.distance", "section.distance"))
-    return rows
+function mouseRows(state, target, moreOpen) {
+  var rows = []
+  var single = target !== "all" && state.mice[target]
+  if (state.connectedMice.length > 0) rows.push({ type: "dropdown", id: "m.target", labelKey: "label.m.target" })
+  if (single) {
+    rows.push(toggle("m.custom", true))
+    if (!state.mice[target].custom) return rows
   }
-  if (tab === "cursor") {
-    rows.push(slider("c.size", "section.size"))
-    rows.push({ type: "dropdown", id: "c.theme", labelKey: "section.theme" })
-    rows.push(choice("c.focus", "section.focus", hasTouchpad))
-    rows.push(slider("c.hide", "section.hide"))
-    rows.push(toggles(["c.hidekey", "c.hidetouch", "c.warp", "c.warpws", "c.resize"]))
-    rows.push(slider("c.zoom", "section.zoom"))
-    return rows
+  var values = single ? state.mice[target] : state.mouse
+  rows.push(header("section.pointer"))
+  rows.push(slider("m.speed"))
+  rows.push(choice("m.accel"))
+  rows.push(choice("m.primary"))
+  if (!single && state.mouse.forceNoAccel) rows.push(warning("warn.rawInput"))
+  rows.push(header("section.scrolling"))
+  rows.push(slider("m.scroll"))
+  rows.push(toggle("m.natural"))
+  if (single) return rows
+  var own = state.connectedMice.filter(function(n) { return state.mice[n] && state.mice[n].custom }).length
+  if (own > 0) rows.push(note(own === 1 ? "note.ownOne" : "note.ownMany", String(own)))
+  var open = moreOpen === undefined ? state.mouse.forceNoAccel || state.mouse.buttonScroll : moreOpen
+  rows.push(more("mouse", open))
+  if (open) {
+    rows.push(toggle("m.noaccel", true))
+    rows.push(toggle("m.btnscroll", true))
+    if (state.mouse.buttonScroll) rows.push(toggle("m.btnlock", true))
   }
-  if (state.connectedMice.length > 0) rows.push({ type: "dropdown", id: "m.target", labelKey: "section.target" })
-  if (target !== "all" && state.mice[target]) {
-    rows.push(toggles(["m.custom"]))
-    if (!state.mice[target].custom) {
-      rows.push({ type: "note", labelKey: "note.followsAll" })
-      return rows
-    }
-    rows = rows.concat(pointerRows("m", hasTouchpad))
-    rows.push(toggles(["m.natural"]))
-    return rows
-  }
-  rows = rows.concat(pointerRows("m", hasTouchpad))
-  rows.push(toggles(["m.natural", "m.noaccel", "m.btnscroll", "m.btnlock"]))
   return rows
+}
+
+function gestureConflict(t) {
+  return t.gestures && t.drag3fg !== "off" && t.drag3fg === t.gestureFingers
+}
+
+function touchpadRows(state, moreOpen) {
+  var t = state.touchpad
+  var rows = [header("section.pointer"), slider("t.speed"), choice("t.accel"), choice("t.primary")]
+  rows.push(header("section.scrolling"))
+  rows.push(slider("t.scroll"))
+  rows.push(toggle("t.natural"))
+  rows.push(header("section.clicking"))
+  rows.push(toggle("t.tap"))
+  if (t.tapToClick) rows.push(choice("t.tapmap"))
+  rows.push(toggle("t.clickfinger", true))
+  rows.push(toggle("t.dwt", true))
+  rows.push(header("section.gestures"))
+  rows.push(toggle("t.gestures", true))
+  if (t.gestures) {
+    rows.push(choice("t.fingers"))
+    rows.push(slider("t.distance"))
+    rows.push(toggle("t.invert"))
+  }
+  if (gestureConflict(t)) rows.push(warning("warn.fingerConflict", t.drag3fg))
+  var changed = t.scrollMethod !== "2fg" || !t.tapAndDrag || t.dragLock || t.middleEmulation || t.drag3fg !== "off"
+  var open = moreOpen === undefined ? changed || gestureConflict(t) : moreOpen
+  rows.push(more("touchpad", open))
+  if (open) {
+    rows.push(choice("t.scrollmethod"))
+    rows.push(choice("t.drag3fg"))
+    if (t.tapToClick) {
+      rows.push(toggle("t.tapdrag", true))
+      if (t.tapAndDrag) rows.push(toggle("t.draglock", true))
+    }
+    rows.push(toggle("t.middle", true))
+  }
+  return rows
+}
+
+function cursorRows(state, moreOpen) {
+  var c = state.cursor
+  var rows = [header("section.appearance"), slider("c.size"), { type: "dropdown", id: "c.theme", labelKey: "label.c.theme" }]
+  rows.push(note("note.cursorApps"))
+  rows.push(header("section.hiding"))
+  rows.push(slider("c.hide"))
+  rows.push(toggle("c.hidekey"))
+  rows.push(toggle("c.hidetouch"))
+  rows.push(header("section.focus"))
+  rows.push(choice("c.focus"))
+  rows.push(toggle("c.warp", true))
+  rows.push(toggle("c.warpws", true))
+  var zoomed = Number(c.zoom) > 1
+  var open = moreOpen === undefined ? zoomed || !c.resizeOnBorder : moreOpen
+  rows.push(more("cursor", open))
+  if (open) {
+    rows.push(toggle("c.resize", true))
+    rows.push(slider("c.zoom"))
+    if (zoomed) rows.push(warning("warn.zoom", "", "c.zoom.reset"))
+  }
+  return rows
+}
+
+function layout(tab, target, state, moreOpen) {
+  var open = moreOpen || {}
+  var rows = [{ type: "tabs", id: "tab", options: tabOptions(state.hasTouchpad) }]
+  if (tab === "touchpad" && state.hasTouchpad) return rows.concat(touchpadRows(state, open.touchpad))
+  if (tab === "cursor") return rows.concat(cursorRows(state, open.cursor))
+  return rows.concat(mouseRows(state, target, open.mouse))
 }
 
 function focusTargets(rows) {
@@ -313,10 +366,11 @@ function focusTargets(rows) {
   for (var i = 0; i < rows.length; i++) {
     var row = rows[i]
     if (row.type === "slider") out.push({ id: row.id, kind: "slider", count: 0 })
-    else if (row.type === "choice") out.push({ id: row.id, kind: "choice", count: row.options.length })
+    else if (row.type === "choice" || row.type === "tabs") out.push({ id: row.id, kind: "choice", count: row.options.length })
     else if (row.type === "dropdown") out.push({ id: row.id, kind: "dropdown", count: 0 })
-    else if (row.type === "pair") row.items.forEach(function(item) { out.push({ id: item.id, kind: "choice", count: item.options.length }) })
-    else if (row.type === "toggles") row.items.forEach(function(item) { out.push({ id: item.id, kind: "toggle", count: 0 }) })
+    else if (row.type === "switch") out.push({ id: row.id, kind: "toggle", count: 0 })
+    else if (row.type === "more") out.push({ id: row.id, kind: "more", count: 0 })
+    else if (row.type === "warning" && row.action) out.push({ id: row.action, kind: "action", count: 0 })
   }
   return out
 }
