@@ -1,17 +1,14 @@
 # Mouse & Touchpad
 
-Omarchy bar widget for pointer settings, with separate tabs for mice, the
-touchpad, and the cursor.
+Omarchy bar widget for pointer settings, with separate tabs for your mice, your
+touchpad, and the cursor. It follows your Omarchy theme: each tab takes its own
+color from the theme palette.
 
-- **Mouse**: speed, scroll speed, acceleration, primary button, natural
-  scroll, raw input, middle-drag scrolling. Pick **All mice** or a single
-  connected mouse and give it its own settings.
-- **Touchpad**: its own speed, scroll speed, acceleration and primary button,
-  plus tap to click, pause while typing, two-finger click, tap and drag, drag
-  lock, middle click emulation, two-finger tap action, edge or two-finger
-  scrolling, three/four-finger drag, and workspace swipe gestures.
-- **Cursor**: size, theme, focus follows mouse, hide when idle, hide while
-  typing or on touch, jump to focus, resize by dragging borders, and zoom.
+<p align="center">
+  <img src="screenshots/mouse.png" alt="Mouse tab" width="32%">
+  <img src="screenshots/touchpad.png" alt="Touchpad tab" width="32%">
+  <img src="screenshots/cursor.png" alt="Cursor tab" width="32%">
+</p>
 
 Based on [wouldja/omarchy-mouse](https://github.com/wouldja/omarchy-mouse).
 
@@ -21,9 +18,49 @@ Based on [wouldja/omarchy-mouse](https://github.com/wouldja/omarchy-mouse).
 omarchy plugin add https://github.com/T3mon/omarchy-pointer.git --enable
 ```
 
-Click the mouse icon to open the panel. When a touchpad is detected, a
-**Mouse / Touchpad** switch at the top picks which device you are editing.
-Scrolling over the icon nudges the pointer speed of the device last shown.
+Click the mouse icon in the bar to open the panel. Scroll over the icon to nudge
+the pointer speed of the tab you last had open.
+
+## Settings
+
+### Mouse
+
+| Section | Options |
+|---|---|
+| Applies to | **All mice**, or one connected mouse with **Own settings** |
+| Pointer | Speed, acceleration (adaptive or flat), primary button |
+| Scrolling | Scroll speed, natural scrolling |
+| More options | Raw input, middle-button scrolling, click to lock |
+
+### Touchpad
+
+Shown when a touchpad is detected. Everything here is separate from the mouse.
+
+| Section | Options |
+|---|---|
+| Pointer | Speed, acceleration, primary button |
+| Scrolling | Scroll speed, natural scrolling |
+| Clicking | Tap to click, two-finger tap action, click with fingers, pause while typing |
+| Gestures | Swipe between workspaces, finger count, swipe distance, invert direction |
+| More options | Scroll with two fingers or the edge, three/four-finger drag, tap and drag, drag lock, middle click |
+
+### Cursor
+
+| Section | Options |
+|---|---|
+| Appearance | Size, theme |
+| Hiding | Hide when idle, hide while typing, hide after touch input |
+| Focus | Focus follows mouse (off, hover, click), jump to focused window, jump on workspace switch |
+| More options | Resize from borders, zoom |
+
+Options that only matter together appear together: the swipe settings show up
+when swipe is on, and drag lock when tap and drag is on. The panel warns about
+settings that need attention, such as raw input bypassing your speed, swipe and
+finger drag using the same number of fingers, or zoom staying on after a
+restart.
+
+The whole panel works from the keyboard: arrow keys move between controls,
+Enter toggles or picks, and Escape closes it.
 
 ## How the settings stay separate
 
@@ -50,8 +87,8 @@ any click, also writes:
   `require("hypr.input")` if missing (a `.bak.<pid>` copy is kept)
 
 Because `pointer.lua` loads after `input.lua`, it wins over pointer settings
-there. On first open, an existing `hl.device` block for your touchpad in
-`~/.config/hypr/*.lua` is read so its speed is kept.
+there. On first open, existing `hl.device` blocks for your devices in
+`~/.config/hypr/*.lua` are read so their values are kept.
 
 Changing swipe gestures reloads Hyprland. Changing cursor size or theme also
 runs `hyprctl setcursor` and updates the GNOME cursor settings for GTK apps.
