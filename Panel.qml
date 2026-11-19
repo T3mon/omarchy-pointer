@@ -12,60 +12,83 @@ Panel {
   moduleName: "t3mon.pointer"
   ipcTarget: "t3mon.pointer"
 
-  property var mouse: Model.mouseDefaults()
-  property var touchpad: Model.touchpadDefaults()
-  property bool hasTouchpad: false
-  property string device: "mouse"
+  property var state: Model.emptyState()
+  property string tab: "mouse"
+  property string target: "all"
 
   property real wheelAccumulator: 0
   property bool persistQueued: false
   property bool liveQueued: false
+  property bool dragging: false
 
-  property string focusSection: "speed"
-  property int selectedIndex: -1
+  property string focusId: "tab"
+  property int selectedIndex: 0
   property bool cursorActive: false
 
-  readonly property bool touchpadTab: root.device === "touchpad" && root.hasTouchpad
-  readonly property var active: root.touchpadTab ? root.touchpad : root.mouse
-  readonly property real speedPercent: Model.speedPercentFromSensitivity(root.active.sensitivity)
-  readonly property real scrollPercent: Model.scrollPercentFromFactor(root.active.scrollFactor)
-  readonly property var visibleSections: Model.visibleSections(root.device, root.hasTouchpad)
+  readonly property string activeTab: root.tab === "touchpad" && !root.state.hasTouchpad ? "mouse" : root.tab
+  readonly property var rows: Model.layout(root.activeTab, root.target, root.state)
+  readonly property var targets: Model.focusTargets(root.rows)
   readonly property string applyPath: {
     var url = String(Qt.resolvedUrl("apply.py"))
     if (url.indexOf("file://") === 0) url = url.slice(7)
     try { return decodeURIComponent(url) } catch (e) { return url }
   }
-
-  readonly property var deviceOptions: [
-    { value: "mouse", label: strings.t("device.mouse") },
-    { value: "touchpad", label: strings.t("device.touchpad") }
-  ]
-  readonly property var accelOptions: [
-    { value: "adaptive", label: strings.t("accel.adaptive") },
-    { value: "flat", label: strings.t("accel.flat") }
-  ]
-  readonly property var primaryOptions: [
-    { value: "left", label: strings.t("primary.left") },
-    { value: "right", label: strings.t("primary.right") }
-  ]
+  readonly property string glyph: root.activeTab === "touchpad" ? "󰟸" : (root.activeTab === "cursor" ? "󰆽" : "󰍽")
 
   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
+  function value(id) {
+    if (id === "tab") return root.activeTab
+    if (id === "m.target") return root.target
+    return Model.uiValue(root.state, root.target, id)
+  }
+
+  function optionList(id) {
+    if (id === "m.target") {
+      var list = [{ value: "all", label: strings.t("target.all") }]
+      root.state.connectedMice.forEach(function(name) { list.push({ value: name, label: name }) })
+      return list
+    }
+    if (id === "c.theme") {
+      return root.state.themes.map(function(name) {
+        return { value: name, label: name === "default" ? strings.t("theme.default") : name }
+      })
+    }
+    return []
+  }
+
+  function translated(options) {
+    return options.map(function(o) { return { value: o.value, label: strings.t(o.labelKey) } })
+  }
+
+  function sliderLabel(id, v) {
+    var t = Model.sliderText(id, v, Commons.I18n.formatNumber)
+    return strings.t(t.key).arg(t.arg)
+  }
+
   function heroMeta() {
-    var a = root.active
-    var parts = [strings.t(root.touchpadTab ? "device.touchpad" : "device.mouse").toUpperCase(),
-                 strings.t("accel." + a.accelProfile).toUpperCase(),
-                 Commons.I18n.formatNumber(Math.round(speedSlider.dragging ? speedSlider.liveValue : root.speedPercent)) + "%"]
-    if (a.naturalScroll) parts.push(strings.t("meta.natural"))
-    if (a.leftHanded) parts.push(strings.t("meta.left"))
+    var s = root.state
+    if (root.activeTab === "cursor") {
+      return [strings.t("tab.cursor").toUpperCase(),
+              root.sliderLabel("c.size", s.cursor.size),
+              (s.cursor.theme === "default" ? strings.t("theme.default") : s.cursor.theme).toUpperCase()].join(" · ")
+    }
+    var prefix = root.activeTab === "touchpad" ? "t" : "m"
+    var name = root.activeTab === "touchpad" ? strings.t("tab.touchpad")
+      : (root.target === "all" ? strings.t("target.all") : root.target)
+    var parts = [name.toUpperCase()]
+    var speedId = Model.speedId(root.activeTab, root.target, s)
+    if (speedId) {
+      parts.push(strings.t("accel." + Model.rawValue(s, root.target, prefix + ".accel")).toUpperCase())
+      parts.push(root.sliderLabel(speedId, root.value(speedId)))
+    }
     return parts.join(" · ")
   }
 
   function applyParsed(parsed) {
-    if (!parsed.ok) return
-    root.mouse = parsed.mouse
-    root.touchpad = parsed.touchpad
-    root.hasTouchpad = parsed.hasTouchpad
+    if (!parsed.ok || root.dragging) return
+    root.state = parsed
+    if (root.target !== "all" && !(root.target in parsed.mice)) root.target = "all"
   }
 
   function refresh() {
@@ -85,74 +108,84 @@ Panel {
     var mode = root.persistQueued ? "apply" : "live"
     root.persistQueued = false
     root.liveQueued = false
-    setProc.command = ["python3", root.applyPath, mode, Model.statePayload(root.mouse, root.touchpad)]
+    setProc.command = ["python3", root.applyPath, mode, Model.statePayload(root.state)]
     setProc.running = true
   }
 
-  function setField(key, value, mode) {
-    if (root.touchpadTab) root.touchpad = Model.withField(root.touchpad, key, value)
-    else root.mouse = Model.withField(root.mouse, key, value)
+  function setValue(id, v, mode) {
+    if (id === "tab") { root.tab = v; return }
+    if (id === "m.target") { root.target = v; return }
+    root.state = Model.withValue(root.state, root.target, id, v)
+    root.dragging = mode === "live"
     queueApply(mode || "apply")
   }
 
-  function setSpeed(percent, mode) { setField("sensitivity", Model.sensitivityFromSpeedPercent(percent), mode) }
-  function setScroll(percent, mode) { setField("scrollFactor", Model.factorFromScrollPercent(percent), mode) }
-
-  function setDevice(value) {
-    root.device = value === "touchpad" && root.hasTouchpad ? "touchpad" : "mouse"
+  function toggleValue(id) {
+    setValue(id, !root.value(id))
   }
 
-  function choiceOptions(section) {
-    if (section === "device") return root.deviceOptions
-    if (section === "accel") return root.accelOptions
-    if (section === "primary") return root.primaryOptions
+  function focusTarget() {
+    var idx = Model.findTarget(root.targets, root.focusId)
+    return idx >= 0 ? root.targets[idx] : null
+  }
+
+  function focusOn(id, index) {
+    root.cursorActive = true
+    root.focusId = id
+    root.selectedIndex = index
+  }
+
+  function choiceOptions(id) {
+    for (var i = 0; i < root.rows.length; i++) {
+      var row = root.rows[i]
+      if (row.type === "choice" && row.id === id) return row.options
+      if (row.type === "pair")
+        for (var j = 0; j < row.items.length; j++) if (row.items[j].id === id) return row.items[j].options
+    }
     return []
   }
 
-  function applyChoice(section, value) {
-    if (section === "device") setDevice(value)
-    else if (section === "accel") setField("accelProfile", value === "flat" ? "flat" : "adaptive")
-    else if (section === "primary") setField("leftHanded", value === "right")
-  }
-
   function moveCursor(delta) {
-    var sections = root.visibleSections
-    var sIdx = sections.indexOf(root.focusSection)
-    if (sIdx < 0) {
-      root.focusSection = sections[0]
-      root.selectedIndex = Model.sectionFirstIndex(root.focusSection)
-      return
+    var idx = Model.findTarget(root.targets, root.focusId)
+    var next = idx < 0 ? 0 : Math.max(0, Math.min(root.targets.length - 1, idx + (delta > 0 ? 1 : -1)))
+    var t = root.targets[next]
+    if (!t) return
+    root.focusId = t.id
+    if (t.kind === "choice") {
+      var values = root.choiceOptions(t.id).map(function(o) { return String(o.value) })
+      root.selectedIndex = Math.max(0, values.indexOf(String(root.value(t.id))))
+    } else {
+      root.selectedIndex = 0
     }
-    var next = sIdx + (delta > 0 ? 1 : -1)
-    if (next < 0 || next >= sections.length) return
-    root.focusSection = sections[next]
-    root.selectedIndex = Model.sectionFirstIndex(root.focusSection)
   }
 
   function moveCursorH(delta) {
-    if (root.focusSection === "speed") { setSpeed(root.speedPercent + delta * 5); return }
-    if (root.focusSection === "scroll") { setScroll(root.scrollPercent + delta * 5); return }
-    if (Model.sectionIsChoice(root.focusSection)) {
-      var max = Model.sectionChoiceCount(root.focusSection) - 1
-      root.selectedIndex = Math.max(0, Math.min(max, root.selectedIndex + delta))
+    var t = focusTarget()
+    if (!t) return
+    if (t.kind === "slider") {
+      var spec = Model.sliderSpec(t.id)
+      setValue(t.id, Number(root.value(t.id)) + delta * spec.step)
+    } else if (t.kind === "choice") {
+      root.selectedIndex = Math.max(0, Math.min(t.count - 1, root.selectedIndex + delta))
+    } else if (t.kind === "dropdown") {
+      setValue(t.id, Model.nextOption(root.optionList(t.id), root.value(t.id), delta))
     }
   }
 
   function activateCursor() {
-    var field = Model.toggleField(root.focusSection)
-    if (field) { setField(field, !root.active[field]); return }
-    if (Model.sectionIsChoice(root.focusSection)) {
-      var options = choiceOptions(root.focusSection)
-      if (root.selectedIndex >= 0 && root.selectedIndex < options.length)
-        applyChoice(root.focusSection, options[root.selectedIndex].value)
+    var t = focusTarget()
+    if (!t) return
+    if (t.kind === "toggle") toggleValue(t.id)
+    else if (t.kind === "choice") {
+      var options = root.choiceOptions(t.id)
+      if (root.selectedIndex >= 0 && root.selectedIndex < options.length) setValue(t.id, options[root.selectedIndex].value)
+    } else if (t.kind === "dropdown") {
+      setValue(t.id, Model.nextOption(root.optionList(t.id), root.value(t.id), 1))
     }
   }
 
-  function clampCursor() {
-    if (root.visibleSections.indexOf(root.focusSection) < 0) {
-      root.focusSection = root.visibleSections[0]
-      root.selectedIndex = Model.sectionFirstIndex(root.focusSection)
-    }
+  function hasCursor(id, index) {
+    return root.cursorActive && root.focusId === id && (index === undefined || root.selectedIndex === index)
   }
 
   function ensureCursorVisible(item) {
@@ -166,12 +199,9 @@ Panel {
       flick.contentY = pt.y + item.height + margin - flick.height
   }
 
-  function showSpeedOsd() {
+  function showSpeedOsd(id) {
     if (!bar || !bar.shell) return
-    bar.shell.summon("omarchy.osd", JSON.stringify({
-      icon: root.touchpadTab ? "󰟸" : "󰍽",
-      value: root.speedPercent
-    }))
+    bar.shell.summon("omarchy.osd", JSON.stringify({ icon: root.glyph, value: root.value(id) }))
   }
 
   implicitWidth: button.implicitWidth
@@ -182,13 +212,12 @@ Panel {
   onOpenedChanged: {
     if (!opened) return
     refresh()
-    root.focusSection = "speed"
-    root.selectedIndex = -1
+    root.focusId = "tab"
+    root.selectedIndex = 0
     root.cursorActive = false
   }
 
-  onVisibleSectionsChanged: clampCursor()
-  onHasTouchpadChanged: if (!root.hasTouchpad) root.device = "mouse"
+  onTargetsChanged: if (Model.findTarget(root.targets, root.focusId) < 0) { root.focusId = "tab"; root.selectedIndex = 0 }
 
   Process {
     id: getProc
@@ -200,13 +229,6 @@ Panel {
 
   Process {
     id: setProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var parsed = Model.parseState(text)
-        if (parsed.ok) root.hasTouchpad = parsed.hasTouchpad
-      }
-    }
     onRunningChanged: if (!running) root.flushApply()
   }
 
@@ -215,14 +237,16 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "󰍽"
-    tooltipText: strings.t("tooltip")
+    tooltipText: strings.t("title")
     onPressed: function(b) { root.toggle() }
     onWheelMoved: function(delta) {
       var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
       root.wheelAccumulator = wheel.remainder
       if (wheel.steps === 0) return
-      root.setSpeed(root.speedPercent + wheel.steps * 5)
-      root.showSpeedOsd()
+      var id = Model.speedId(root.activeTab === "cursor" ? "mouse" : root.activeTab, root.target, root.state)
+      if (!id) return
+      root.setValue(id, root.value(id) + wheel.steps * 5)
+      root.showSpeedOsd(id)
     }
   }
 
@@ -233,8 +257,8 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(640))
+    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(720))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -275,80 +299,24 @@ Panel {
             iconComponent: heroIcon
           }
 
-          ChoiceSection {
-            width: parent.width
-            visible: root.hasTouchpad
-            sectionId: "device"
-            title: strings.t("section.device")
-            options: root.deviceOptions
-            value: root.touchpadTab ? "touchpad" : "mouse"
-            onActivated: function(v) { root.setDevice(v) }
-          }
+          Repeater {
+            model: root.rows
 
-          SliderSection {
-            id: speedSlider
-            width: parent.width
-            sectionId: "speed"
-            title: strings.t("section.speed")
-            value: root.speedPercent
-            valueText: Commons.I18n.formatNumber(Math.round(dragging ? liveValue : root.speedPercent)) + "%"
-            onMoved: function(v) { root.setSpeed(v, "live") }
-            onReleased: function(v) { root.setSpeed(v, "apply") }
-          }
-
-          SliderSection {
-            width: parent.width
-            sectionId: "scroll"
-            title: strings.t("section.scroll")
-            value: root.scrollPercent
-            valueText: Commons.I18n.formatNumber(Math.round(dragging ? liveValue : root.scrollPercent)) + "%"
-            onMoved: function(v) { root.setScroll(v, "live") }
-            onReleased: function(v) { root.setScroll(v, "apply") }
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(10)
-
-            ChoiceSection {
-              width: (parent.width - parent.spacing) / 2
-              sectionId: "accel"
-              title: strings.t("section.accel")
-              options: root.accelOptions
-              value: root.active.accelProfile
-              onActivated: function(v) { root.applyChoice("accel", v) }
-            }
-
-            ChoiceSection {
-              width: (parent.width - parent.spacing) / 2
-              sectionId: "primary"
-              title: strings.t("section.primary")
-              options: root.primaryOptions
-              value: root.active.leftHanded ? "right" : "left"
-              onActivated: function(v) { root.applyChoice("primary", v) }
-            }
-          }
-
-          Grid {
-            id: switchGrid
-            width: parent.width
-            columns: 2
-            columnSpacing: Style.space(8)
-            rowSpacing: Style.space(4)
-            readonly property real cellWidth: (width - columnSpacing) / 2
-
-            Repeater {
-              model: root.touchpadTab
-                ? ["natural", "tap", "dwt", "clickfinger", "drag3fg"]
-                : ["natural"]
-
-              CompactToggle {
-                required property string modelData
-                width: switchGrid.cellWidth
-                sectionId: modelData
-                label: strings.t("toggle." + modelData)
-                checked: root.active[Model.toggleField(modelData)] === true
-                onClicked: root.setField(Model.toggleField(modelData), !checked)
+            Loader {
+              required property var modelData
+              width: panelColumn.width
+              property var row: modelData
+              sourceComponent: {
+                switch (modelData.type) {
+                case "slider": return sliderRow
+                case "choice": return choiceRow
+                case "pair": return pairRow
+                case "toggles": return togglesRow
+                case "dropdown": return dropdownRow
+                case "header": return headerRow
+                case "note": return noteRow
+                }
+                return null
               }
             }
           }
@@ -361,23 +329,126 @@ Panel {
     id: heroIcon
     Text {
       textFormat: Text.PlainText
-      text: root.touchpadTab ? "󰟸" : "󰍽"
+      text: root.glyph
       color: root.bar.foreground
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.title
     }
   }
 
+  Component {
+    id: sliderRow
+    SliderSection {
+      width: parent ? parent.width : 0
+      row: parent ? parent.row : ({})
+    }
+  }
+
+  Component {
+    id: choiceRow
+    ChoiceSection {
+      width: parent ? parent.width : 0
+      row: parent ? parent.row : ({ options: [] })
+    }
+  }
+
+  Component {
+    id: pairRow
+    Row {
+      id: pair
+      property var row: parent ? parent.row : ({ items: [] })
+      width: parent ? parent.width : 0
+      spacing: Style.space(10)
+      Repeater {
+        model: pair.row.items
+        ChoiceSection {
+          required property var modelData
+          width: (pair.width - pair.spacing) / 2
+          row: modelData
+        }
+      }
+    }
+  }
+
+  Component {
+    id: togglesRow
+    Grid {
+      id: grid
+      property var row: parent ? parent.row : ({ items: [] })
+      width: parent ? parent.width : 0
+      columns: 2
+      columnSpacing: Style.space(8)
+      rowSpacing: Style.space(4)
+      readonly property real cellWidth: (width - columnSpacing) / 2
+      Repeater {
+        model: grid.row.items
+        CompactToggle {
+          required property var modelData
+          width: grid.cellWidth
+          toggleId: modelData.id
+          label: strings.t(modelData.labelKey)
+        }
+      }
+    }
+  }
+
+  Component {
+    id: dropdownRow
+    Column {
+      id: dd
+      property var row: parent ? parent.row : ({})
+      width: parent ? parent.width : 0
+      spacing: Style.space(4)
+      PanelSectionHeader {
+        text: strings.t(dd.row.labelKey || "")
+        foreground: root.bar.foreground
+        fontFamily: root.bar.fontFamily
+      }
+      Dropdown {
+        id: dropdown
+        width: dd.width
+        showLabel: false
+        fontFamily: root.bar.fontFamily
+        options: root.optionList(dd.row.id)
+        value: String(root.value(dd.row.id))
+        hasCursor: root.hasCursor(dd.row.id)
+        onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(dropdown)
+        onHovered: function(h) { if (h) root.focusOn(dd.row.id, 0) }
+        onChanged: function(v) { root.setValue(dd.row.id, v) }
+      }
+    }
+  }
+
+  Component {
+    id: headerRow
+    PanelSectionHeader {
+      property var row: parent ? parent.row : ({})
+      topPadding: Style.space(6)
+      text: strings.t(row.labelKey || "")
+      foreground: root.bar.foreground
+      fontFamily: root.bar.fontFamily
+    }
+  }
+
+  Component {
+    id: noteRow
+    Text {
+      property var row: parent ? parent.row : ({})
+      width: parent ? parent.width : 0
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      text: strings.t(row.labelKey || "")
+      color: Qt.darker(root.bar.foreground, 1.4)
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
   component SliderSection: Column {
     id: sliderSection
-    required property string sectionId
-    required property string title
-    required property string valueText
-    property real value: 0
-    property alias dragging: slider.dragging
-    property alias liveValue: slider.liveValue
-    signal moved(real value)
-    signal released(real value)
+    property var row: ({})
+    readonly property string sid: row.id || ""
+    readonly property var spec: Model.sliderSpec(sid)
 
     spacing: Style.space(2)
 
@@ -387,7 +458,7 @@ Panel {
 
       PanelSectionHeader {
         id: header
-        text: sliderSection.title
+        text: strings.t(sliderSection.row.labelKey || "")
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
         anchors.left: parent.left
@@ -397,7 +468,7 @@ Panel {
       Text {
         id: valueLabel
         textFormat: Text.PlainText
-        text: sliderSection.valueText
+        text: root.sliderLabel(sliderSection.sid, slider.dragging ? slider.liveValue : root.value(sliderSection.sid))
         color: Qt.darker(root.bar.foreground, 1.4)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption
@@ -409,11 +480,11 @@ Panel {
     }
 
     CursorSurface {
-      id: sliderRow
+      id: sliderBox
       width: parent.width
       height: slider.implicitHeight
-      hasCursor: root.cursorActive && root.focusSection === sliderSection.sectionId
-      onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderRow)
+      hasCursor: root.hasCursor(sliderSection.sid)
+      onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderBox)
       foreground: root.bar.foreground
       outline: true
 
@@ -423,47 +494,41 @@ Panel {
         anchors.fill: parent
         anchors.leftMargin: Style.space(6)
         anchors.rightMargin: Style.space(6)
-        minimum: 0
-        maximum: 100
-        step: 5
-        integer: true
-        value: sliderSection.value
-        onMoved: function(v) { sliderSection.moved(v) }
-        onReleased: function(v) { sliderSection.released(v) }
+        minimum: sliderSection.spec.min
+        maximum: sliderSection.spec.max
+        step: sliderSection.spec.step
+        integer: sliderSection.spec.integer
+        value: Number(root.value(sliderSection.sid))
+        onMoved: function(v) { root.setValue(sliderSection.sid, v, "live") }
+        onReleased: function(v) { root.setValue(sliderSection.sid, v, "apply") }
       }
 
       HoverHandler {
-        onHoveredChanged: if (hovered) {
-          root.cursorActive = true
-          root.focusSection = sliderSection.sectionId
-          root.selectedIndex = -1
-        }
+        onHoveredChanged: if (hovered) root.focusOn(sliderSection.sid, 0)
       }
     }
   }
 
   component ChoiceSection: Column {
     id: choiceSection
-    required property string sectionId
-    required property string title
-    required property var options
-    required property string value
-    signal activated(string value)
+    property var row: ({ options: [] })
+    readonly property string cid: row.id || ""
+    readonly property var options: root.translated(row.options || [])
 
     spacing: Style.space(4)
 
     PanelSectionHeader {
-      text: choiceSection.title
+      text: strings.t(choiceSection.row.labelKey || "")
       foreground: root.bar.foreground
       fontFamily: root.bar.fontFamily
     }
 
     Grid {
-      id: choiceRow
+      id: choiceGrid
       width: parent.width
-      columns: choiceSection.options.length
+      columns: Math.max(1, choiceSection.options.length)
       spacing: Style.spacing.xs
-      readonly property real cellWidth: columns > 0 ? (width - spacing * (columns - 1)) / columns : 0
+      readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
 
       Repeater {
         model: choiceSection.options
@@ -471,7 +536,7 @@ Panel {
         Button {
           required property var modelData
           required property int index
-          width: choiceRow.cellWidth
+          width: choiceGrid.cellWidth
           text: modelData.label
           fontSize: Style.font.caption
           foreground: root.bar.foreground
@@ -479,15 +544,11 @@ Panel {
           horizontalPadding: Style.spacing.sm
           verticalPadding: Style.space(4)
           bordered: true
-          selected: choiceSection.value === modelData.value
-          hasCursor: root.cursorActive && root.focusSection === choiceSection.sectionId && root.selectedIndex === index
-          onClicked: choiceSection.activated(modelData.value)
-          onHovered: function(isHovered) {
-            if (!isHovered) return
-            root.cursorActive = true
-            root.focusSection = choiceSection.sectionId
-            root.selectedIndex = index
-          }
+          selected: String(root.value(choiceSection.cid)) === String(modelData.value)
+          hasCursor: root.hasCursor(choiceSection.cid, index)
+          onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(this)
+          onClicked: root.setValue(choiceSection.cid, modelData.value)
+          onHovered: function(isHovered) { if (isHovered) root.focusOn(choiceSection.cid, index) }
         }
       }
     }
@@ -495,16 +556,15 @@ Panel {
 
   component CompactToggle: BorderSurface {
     id: toggleRow
-    required property string label
-    required property string sectionId
-    property bool checked: false
-    signal clicked()
+    property string toggleId: ""
+    property string label: ""
+    readonly property bool checked: root.value(toggleId) === true
 
     implicitHeight: Style.space(32)
     radius: Style.cornerRadius
     color: "transparent"
     borderSpec: Border.controlSpec(
-      (root.cursorActive && root.focusSection === sectionId) || mouseArea.containsMouse ? "hover-cursor" : "normal",
+      root.hasCursor(toggleId) || mouseArea.containsMouse ? "hover-cursor" : "normal",
       root.bar.foreground, Color.accent)
 
     Row {
@@ -541,12 +601,8 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onEntered: {
-        root.cursorActive = true
-        root.focusSection = toggleRow.sectionId
-        root.selectedIndex = 0
-      }
-      onClicked: toggleRow.clicked()
+      onEntered: root.focusOn(toggleRow.toggleId, 0)
+      onClicked: root.toggleValue(toggleRow.toggleId)
     }
   }
 }

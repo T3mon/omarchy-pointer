@@ -1,9 +1,17 @@
 # Mouse & Touchpad
 
-Omarchy bar widget that configures your mouse and your touchpad separately:
-pointer speed, acceleration, scroll speed, natural scrolling, and primary
-button for each, plus tap to click, pause while typing, two-finger click,
-and three-finger drag for the touchpad.
+Omarchy bar widget for pointer settings, with separate tabs for mice, the
+touchpad, and the cursor.
+
+- **Mouse**: speed, scroll speed, acceleration, primary button, natural
+  scroll, raw input, middle-drag scrolling. Pick **All mice** or a single
+  connected mouse and give it its own settings.
+- **Touchpad**: its own speed, scroll speed, acceleration and primary button,
+  plus tap to click, pause while typing, two-finger click, tap and drag, drag
+  lock, middle click emulation, two-finger tap action, edge or two-finger
+  scrolling, three/four-finger drag, and workspace swipe gestures.
+- **Cursor**: size, theme, focus follows mouse, hide when idle, hide while
+  typing or on touch, jump to focus, resize by dragging borders, and zoom.
 
 Based on [wouldja/omarchy-mouse](https://github.com/wouldja/omarchy-mouse).
 
@@ -19,17 +27,17 @@ Scrolling over the icon nudges the pointer speed of the device last shown.
 
 ## How the settings stay separate
 
-Hyprland's global `input` section applies to every pointer, so the plugin
-splits them like this:
+| Setting | Where it is written |
+|---|---|
+| All mice | `input` |
+| One mouse with Own settings | `hl.device` for that mouse |
+| Touchpad speed, acceleration, primary, scroll method | `hl.device` per touchpad |
+| Touchpad scroll, tap, drag options | `input.touchpad` |
+| Swipe gestures | `hl.gesture` and `gestures` |
+| Cursor | `cursor`, `general`, `input.follow_mouse`, cursor env vars |
 
-| Setting | Mouse | Touchpad |
-|---|---|---|
-| Pointer speed, acceleration, primary button | `input` | `hl.device` per touchpad (overrides `input`) |
-| Scroll speed, natural scroll | `input` | `input.touchpad` |
-| Tap, pause while typing, two-finger click, three-finger drag | | `input.touchpad` |
-
-Touchpads are found with `hyprctl devices` (any pointer whose name contains
-`touchpad` or `trackpad`).
+Touchpads are the pointers whose name contains `touchpad` or `trackpad`; every
+other pointer from `hyprctl devices` is listed as a mouse.
 
 ## What it changes
 
@@ -44,6 +52,9 @@ any click, also writes:
 Because `pointer.lua` loads after `input.lua`, it wins over pointer settings
 there. On first open, an existing `hl.device` block for your touchpad in
 `~/.config/hypr/*.lua` is read so its speed is kept.
+
+Changing swipe gestures reloads Hyprland. Changing cursor size or theme also
+runs `hyprctl setcursor` and updates the GNOME cursor settings for GTK apps.
 
 It never edits `/usr/share/omarchy` and never asks for elevated permissions.
 
