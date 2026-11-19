@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "t3mon.pointer",
+  "name": "Mouse & Touchpad",
+  "version": "1.0.0",
+  "author": "T3mon",
+  "license": "MIT",
+  "description": "Separate pointer speed, acceleration, scrolling, and button settings for your mouse and your touchpad",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Mouse & Touchpad",
+    "description": "Separate pointer speed, acceleration, scrolling, and button settings for your mouse and your touchpad",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

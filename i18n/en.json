@@ -1,0 +1,23 @@
+{
+  "title": "Mouse & Touchpad",
+  "tooltip": "Mouse & Touchpad",
+  "device.mouse": "Mouse",
+  "device.touchpad": "Touchpad",
+  "section.device": "DEVICE",
+  "section.speed": "POINTER SPEED",
+  "section.scroll": "SCROLL SPEED",
+  "section.accel": "ACCELERATION",
+  "section.primary": "PRIMARY",
+  "accel.adaptive": "Adaptive",
+  "accel.flat": "Flat",
+  "primary.left": "Left",
+  "primary.right": "Right",
+  "toggle.natural": "Natural scroll",
+  "toggle.tap": "Tap to click",
+  "toggle.dwt": "Pause while typing",
+  "toggle.clickfinger": "Two-finger click",
+  "toggle.drag3fg": "Three-finger drag",
+  "meta.natural": "NATURAL",
+  "meta.left": "LEFT-HANDED",
+  "noTouchpad": "No touchpad detected"
+}
