@@ -27,6 +27,7 @@ Panel {
   property string focusId: "tab"
   property int selectedIndex: 0
   property bool cursorActive: false
+  property bool keyboardNav: false
 
   readonly property string activeTab: root.tab === "touchpad" && !root.state.hasTouchpad ? "mouse" : root.tab
   readonly property var targets: Model.focusTargets(root.rows)
@@ -197,6 +198,7 @@ Panel {
   }
 
   function focusOn(id, index) {
+    root.keyboardNav = false
     root.cursorActive = true
     root.focusId = id
     root.selectedIndex = index
@@ -208,6 +210,7 @@ Panel {
   }
 
   function moveCursor(delta) {
+    root.keyboardNav = true
     var idx = Model.findTarget(root.targets, root.focusId)
     var next = idx < 0 ? 0 : Math.max(0, Math.min(root.targets.length - 1, idx + (delta > 0 ? 1 : -1)))
     var t = root.targets[next]
@@ -222,6 +225,7 @@ Panel {
   }
 
   function moveCursorH(delta) {
+    root.keyboardNav = true
     var t = focusTarget()
     if (!t) return
     if (t.kind === "slider") {
@@ -251,10 +255,20 @@ Panel {
     return root.cursorActive && root.focusId === id && (index === undefined || root.selectedIndex === index)
   }
 
+  function overflowing() {
+    return panelColumn.implicitHeight > scrollArea.height + 1
+  }
+
+  function resetScroll() {
+    var flick = scrollArea.contentItem
+    if (flick && flick.contentY !== undefined) flick.contentY = 0
+  }
+
   function ensureCursorVisible(item) {
-    if (!item || !scrollArea) return
+    if (!item || !scrollArea || !root.keyboardNav) return
     var flick = scrollArea.contentItem
     if (!flick || flick.contentY === undefined) return
+    if (!root.overflowing()) { flick.contentY = 0; return }
     var pt = item.mapToItem(flick.contentItem || flick, 0, 0)
     var margin = 6
     if (pt.y < flick.contentY + margin) flick.contentY = Math.max(0, pt.y - margin)
@@ -280,6 +294,8 @@ Panel {
     root.focusId = "tab"
     root.selectedIndex = 0
     root.cursorActive = false
+    root.keyboardNav = false
+    root.resetScroll()
   }
 
   onTargetsChanged: if (Model.findTarget(root.targets, root.focusId) < 0) { root.focusId = "tab"; root.selectedIndex = 0 }
@@ -323,7 +339,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(1000))
+    contentHeight: panel.fittedContentHeight(Math.ceil(panelColumn.implicitHeight) + Style.space(4), Style.space(1000))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -342,11 +358,12 @@ Panel {
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: root.overflowing() ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        onHeightChanged: if (!root.overflowing()) root.resetScroll()
         Binding {
           target: scrollArea.contentItem
           property: "interactive"
-          value: panelColumn.implicitHeight > scrollArea.height
+          value: root.overflowing()
         }
 
         Column {
