@@ -394,14 +394,148 @@ function nextOption(options, current, delta) {
   return options[idx].value
 }
 
-var PALETTE_KEYS = ["accent", "red", "yellow", "orange", "green", "cyan", "blue", "magenta"]
+var PALETTE_KEYS = ["accent", "background", "red", "yellow", "orange", "green", "cyan", "blue", "magenta",
+  "bright_green", "bright_cyan", "bright_blue", "bright_magenta", "bright_red"]
+var TINT_CANDIDATES = ["green", "cyan", "blue", "magenta", "orange", "bright_green", "bright_cyan", "bright_blue", "bright_magenta"]
+var MIN_TOUCHPAD_GAP = 60
+var MIN_CURSOR_GAP = 60
+var MIN_CONTRAST = 3
 
 function parsePalette(raw) {
   var out = {}
   var lines = String(raw || "").split("\n")
   for (var i = 0; i < lines.length; i++) {
     var match = lines[i].match(/^\s*([a-z_]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})["']?\s*$/)
-    if (match && PALETTE_KEYS.indexOf(match[1]) >= 0) out[match[1]] = match[2]
+    if (match && PALETTE_KEYS.indexOf(match[1]) >= 0) out[match[1]] = match[2].toLowerCase()
   }
   return out
+}
+
+function hexToRgb(hex) {
+  var s = String(hex || "").replace("#", "")
+  if (s.length === 8) s = s.slice(2)
+  if (!/^[0-9a-fA-F]{6}$/.test(s)) return null
+  return { r: parseInt(s.slice(0, 2), 16) / 255, g: parseInt(s.slice(2, 4), 16) / 255, b: parseInt(s.slice(4, 6), 16) / 255 }
+}
+
+function rgbToHsl(c) {
+  var max = Math.max(c.r, c.g, c.b), min = Math.min(c.r, c.g, c.b)
+  var l = (max + min) / 2, h = 0, s = 0
+  if (max !== min) {
+    var d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === c.r) h = (c.g - c.b) / d + (c.g < c.b ? 6 : 0)
+    else if (max === c.g) h = (c.b - c.r) / d + 2
+    else h = (c.r - c.g) / d + 4
+    h *= 60
+  }
+  return { h: h, s: s, l: l }
+}
+
+function hslToHex(h, s, l) {
+  function f(n) {
+    var k = (n + h / 30) % 12
+    var a = s * Math.min(l, 1 - l)
+    var v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    var x = Math.round(v * 255).toString(16)
+    return x.length < 2 ? "0" + x : x
+  }
+  return "#" + f(0) + f(8) + f(4)
+}
+
+function hueGap(a, b) {
+  var d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+
+function luminance(c) {
+  function ch(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+  return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+}
+
+function contrast(a, b) {
+  var la = luminance(a), lb = luminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+function toHex(c) {
+  return "#" + [c.r, c.g, c.b].map(function(v) {
+    var x = Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)
+    return x.length < 2 ? "0" + x : x
+  }).join("")
+}
+
+function readable(hex, bgRgb) {
+  var rgb = hexToRgb(hex)
+  if (!rgb || contrast(rgb, bgRgb) >= MIN_CONTRAST) return hex
+  var hsl = rgbToHsl(rgb)
+  var step = luminance(bgRgb) < 0.4 ? 0.02 : -0.02
+  var l = hsl.l
+  for (var i = 0; i < 50; i++) {
+    l = Math.max(0, Math.min(1, l + step))
+    var next = hslToHex(hsl.h, hsl.s, l)
+    if (contrast(hexToRgb(next), bgRgb) >= MIN_CONTRAST || l <= 0 || l >= 1) return next
+  }
+  return hslToHex(hsl.h, hsl.s, l)
+}
+
+function pickTints(palette, accentHex, backgroundHex) {
+  var pal = palette || {}
+  var accentRgb = hexToRgb(accentHex) || hexToRgb(pal.accent) || hexToRgb("#7aa2f7")
+  var bgRgb = hexToRgb(backgroundHex) || hexToRgb(pal.background) || hexToRgb("#1a1b26")
+  var accent = rgbToHsl(accentRgb)
+  var dark = luminance(bgRgb) < 0.4
+  var grey = accent.s < 0.15
+  var used = [{ h: accent.h, grey: grey }]
+  var redRgb = hexToRgb(pal.red) || hexToRgb("#e06c75")
+  used.push({ h: rgbToHsl(redRgb).h, grey: false, reserved: true })
+  var yellowRgb = hexToRgb(pal.yellow) || hexToRgb("#e5c07b")
+  used.push({ h: rgbToHsl(yellowRgb).h, grey: false, reserved: true })
+
+  function gapToUsed(h) {
+    var best = 360
+    for (var i = 0; i < used.length; i++) {
+      if (used[i].grey) continue
+      var gap = hueGap(h, used[i].h)
+      best = Math.min(best, used[i].reserved ? gap * 2 : gap)
+    }
+    return best
+  }
+
+  var candidates = []
+  for (var i = 0; i < TINT_CANDIDATES.length; i++) {
+    var hex = pal[TINT_CANDIDATES[i]]
+    var rgb = hexToRgb(hex)
+    if (!rgb) continue
+    var hsl = rgbToHsl(rgb)
+    if (Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b) < 0.28) continue
+    candidates.push({ hex: readable(hex, bgRgb), h: hsl.h })
+  }
+
+  function pick(minGap) {
+    var best = null, bestGap = -1
+    for (var i = 0; i < candidates.length; i++) {
+      var gap = gapToUsed(candidates[i].h)
+      if (gap > bestGap) { best = candidates[i]; bestGap = gap }
+    }
+    if (best && bestGap >= minGap) {
+      used.push({ h: best.h, grey: false })
+      return best.hex
+    }
+    var h = 0
+    var hGap = -1
+    for (var deg = 0; deg < 360; deg += 5) {
+      var g = gapToUsed(deg)
+      if (g > hGap) { hGap = g; h = deg }
+    }
+    var s = Math.max(grey ? 0.55 : accent.s, 0.5)
+    var l = dark ? Math.min(Math.max(accent.l, 0.6), 0.72) : Math.min(Math.max(accent.l, 0.38), 0.48)
+    used.push({ h: h, grey: false })
+    return readable(hslToHex(h, s, l), bgRgb)
+  }
+
+  var mouse = readable(toHex(accentRgb), bgRgb)
+  var touchpad = pick(MIN_TOUCHPAD_GAP)
+  var cursor = pick(MIN_CURSOR_GAP)
+  return { mouse: mouse, touchpad: touchpad, cursor: cursor }
 }

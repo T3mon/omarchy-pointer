@@ -2,7 +2,7 @@ const fs = require("fs")
 const path = require("path")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
-const Model = new Function(source + "; return { parsePalette, speedPercentFromSensitivity, sensitivityFromSpeedPercent, scrollPercentFromFactor, factorFromScrollPercent, parseState, statePayload, withValue, uiValue, layout, focusTargets, speedId, sliderText, nextOption, emptyState }")()
+const Model = new Function(source + "; return { parsePalette, pickTints, hexToRgb, rgbToHsl, hueGap, contrast, speedPercentFromSensitivity, sensitivityFromSpeedPercent, scrollPercentFromFactor, factorFromScrollPercent, parseState, statePayload, withValue, uiValue, layout, focusTargets, speedId, sliderText, nextOption, emptyState }")()
 
 let failures = 0
 function check(name, actual, expected) {
@@ -75,8 +75,28 @@ const zoomed = Model.withValue(s, "all", "c.zoom", 2)
 check("zoom warns with reset", ids(Model.layout("cursor", "all", zoomed)).slice(-3), ["c.resize", "c.zoom", "c.zoom.reset"])
 check("conflict is danger", clashRows.filter(r => r.type === "warning")[0].level, "danger")
 check("zoom is caution", Model.layout("cursor", "all", zoomed).filter(r => r.type === "warning")[0].level, "caution")
-check("palette reads named colors", Model.parsePalette('accent = "#7aa2f7"\ngreen = "#9ece6a"\nmagenta="#ad8ee6"\nbackground = "#000000"'), { accent: "#7aa2f7", green: "#9ece6a", magenta: "#ad8ee6" })
+check("palette reads named colors", Model.parsePalette('accent = "#7aa2f7"\ngreen = "#9ece6a"\nmagenta="#ad8ee6"\nbackground = "#000000"'), { accent: "#7aa2f7", green: "#9ece6a", magenta: "#ad8ee6", background: "#000000" })
 check("palette ignores junk", Model.parsePalette('red = "url(x)"\nblue = "#12345"'), {})
+function tintCheck(name, palette) {
+  const tints = Model.pickTints(palette, palette.accent, palette.background)
+  const list = [tints.mouse, tints.touchpad, tints.cursor]
+  const hsl = list.map(x => Model.rgbToHsl(Model.hexToRgb(x)))
+  const grey = hsl[0].s < 0.15
+  const gaps = [Model.hueGap(hsl[1].h, hsl[2].h)]
+  if (!grey) gaps.push(Model.hueGap(hsl[0].h, hsl[1].h), Model.hueGap(hsl[0].h, hsl[2].h))
+  const bg = Model.hexToRgb(palette.background)
+  check(name + ": tabs are distinct", Math.min(...gaps) >= 60, true)
+  check(name + ": tabs are readable", Math.min(...list.map(x => Model.contrast(Model.hexToRgb(x), bg))) >= 3, true)
+  check(name + ": mouse keeps a readable accent hue", Math.round(hsl[0].h) === Math.round(Model.rgbToHsl(Model.hexToRgb(palette.accent)).h) || grey, true)
+}
+tintCheck("green equals accent", Model.parsePalette('accent = "#ff9f0a"\nbackground = "#1c1c1e"\nred = "#ff5f4a"\nyellow = "#ffc27a"\norange = "#ff6a3d"\ngreen = "#ff9f0a"\ncyan = "#a6dcef"\nblue = "#8fb8de"\nmagenta = "#ff8fa3"'))
+tintCheck("monochrome", Model.parsePalette('accent = "#8d8d8d"\nbackground = "#0d0d0d"\nred = "#8d8d8d"\ngreen = "#8d8d8d"\nblue = "#8d8d8d"\nmagenta = "#8d8d8d"'))
+tintCheck("light theme", Model.parsePalette('accent = "#1e66f5"\nbackground = "#eff1f5"\nred = "#d20f39"\nyellow = "#df8e1d"\ngreen = "#40a02b"\nblue = "#1e66f5"\nmagenta = "#ea76cb"'))
+tintCheck("empty palette", Model.parsePalette('accent = "#7aa2f7"\nbackground = "#1a1b26"'))
+const fallback = Model.pickTints({}, "not a color", "")
+check("bad input still gives three colors", [fallback.mouse, fallback.touchpad, fallback.cursor].every(x => /^#[0-9a-f]{6}$/.test(x)), true)
+const tn = Model.pickTints(Model.parsePalette('accent = "#7aa2f7"\nbackground = "#1a1b26"\nred = "#f7768e"\nyellow = "#e0af68"'), "#7aa2f7", "#1a1b26")
+check("tabs avoid warning red", Model.hueGap(Model.rgbToHsl(Model.hexToRgb(tn.touchpad)).h, Model.rgbToHsl(Model.hexToRgb("#f7768e")).h) >= 30, true)
 check("zoom 1 reads off", Model.sliderText("c.zoom", 1).key, "fmt.off")
 const noPad = Model.parseState('{"hasTouchpad":false}')
 check("no touchpad hides the tab", Model.layout("mouse", "all", noPad)[0].options.map(o => o.value), ["mouse", "cursor"])

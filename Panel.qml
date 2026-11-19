@@ -63,10 +63,11 @@ Panel {
     return value ? value : fallback
   }
 
+  readonly property var tints: Model.pickTints(root.palette, String(Color.accent), String(Color.background))
+
   function tintFor(tab) {
-    if (tab === "touchpad") return root.paletteColor("green", Color.accent)
-    if (tab === "cursor") return root.paletteColor("magenta", Color.accent)
-    return root.paletteColor("accent", Color.accent)
+    if (tab === "touchpad" || tab === "cursor") return root.tints[tab]
+    return root.tints.mouse
   }
 
   function soft(c, a) {
