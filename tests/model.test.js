@@ -2,7 +2,7 @@ const fs = require("fs")
 const path = require("path")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
-const Model = new Function(source + "; return { speedPercentFromSensitivity, sensitivityFromSpeedPercent, scrollPercentFromFactor, factorFromScrollPercent, parseState, statePayload, withValue, uiValue, layout, focusTargets, speedId, sliderText, nextOption, emptyState }")()
+const Model = new Function(source + "; return { parsePalette, speedPercentFromSensitivity, sensitivityFromSpeedPercent, scrollPercentFromFactor, factorFromScrollPercent, parseState, statePayload, withValue, uiValue, layout, focusTargets, speedId, sliderText, nextOption, emptyState }")()
 
 let failures = 0
 function check(name, actual, expected) {
@@ -73,6 +73,10 @@ check("no tap hides tap options", ids(Model.layout("touchpad", "all", Model.with
 check("cursor tab", ids(Model.layout("cursor", "all", s)), ["tab", "c.size", "c.theme", "c.hide", "c.hidekey", "c.hidetouch", "c.focus", "c.warp", "c.warpws", "more.cursor"])
 const zoomed = Model.withValue(s, "all", "c.zoom", 2)
 check("zoom warns with reset", ids(Model.layout("cursor", "all", zoomed)).slice(-3), ["c.resize", "c.zoom", "c.zoom.reset"])
+check("conflict is danger", clashRows.filter(r => r.type === "warning")[0].level, "danger")
+check("zoom is caution", Model.layout("cursor", "all", zoomed).filter(r => r.type === "warning")[0].level, "caution")
+check("palette reads named colors", Model.parsePalette('accent = "#7aa2f7"\ngreen = "#9ece6a"\nmagenta="#ad8ee6"\nbackground = "#000000"'), { accent: "#7aa2f7", green: "#9ece6a", magenta: "#ad8ee6" })
+check("palette ignores junk", Model.parsePalette('red = "url(x)"\nblue = "#12345"'), {})
 check("zoom 1 reads off", Model.sliderText("c.zoom", 1).key, "fmt.off")
 const noPad = Model.parseState('{"hasTouchpad":false}')
 check("no touchpad hides the tab", Model.layout("mouse", "all", noPad)[0].options.map(o => o.value), ["mouse", "cursor"])

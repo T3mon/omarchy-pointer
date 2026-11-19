@@ -258,7 +258,7 @@ function header(labelKey) { return { type: "section", labelKey: labelKey } }
 function slider(id) { return { type: "slider", id: id, labelKey: "label." + id } }
 function choice(id) { return { type: "choice", id: id, labelKey: "label." + id, options: optionsFor(id) } }
 function toggle(id, caption) { return { type: "switch", id: id, labelKey: "label." + id, captionKey: caption ? "caption." + id : "" } }
-function warning(labelKey, arg, action) { return { type: "warning", labelKey: labelKey, arg: arg || "", action: action || "" } }
+function warning(level, labelKey, arg, action) { return { type: "warning", level: level, labelKey: labelKey, arg: arg || "", action: action || "" } }
 function note(labelKey, arg) { return { type: "note", labelKey: labelKey, arg: arg || "" } }
 function more(tab, open) { return { type: "more", id: "more." + tab, labelKey: open ? "more.hide" : "more.show", open: open } }
 
@@ -275,7 +275,7 @@ function mouseRows(state, target, moreOpen) {
   rows.push(slider("m.speed"))
   rows.push(choice("m.accel"))
   rows.push(choice("m.primary"))
-  if (!single && state.mouse.forceNoAccel) rows.push(warning("warn.rawInput"))
+  if (!single && state.mouse.forceNoAccel) rows.push(warning("caution", "warn.rawInput"))
   rows.push(header("section.scrolling"))
   rows.push(slider("m.scroll"))
   rows.push(toggle("m.natural"))
@@ -314,7 +314,7 @@ function touchpadRows(state, moreOpen) {
     rows.push(slider("t.distance"))
     rows.push(toggle("t.invert"))
   }
-  if (gestureConflict(t)) rows.push(warning("warn.fingerConflict", t.drag3fg))
+  if (gestureConflict(t)) rows.push(warning("danger", "warn.fingerConflict", t.drag3fg))
   var changed = t.scrollMethod !== "2fg" || !t.tapAndDrag || t.dragLock || t.middleEmulation || t.drag3fg !== "off"
   var open = moreOpen === undefined ? changed || gestureConflict(t) : moreOpen
   rows.push(more("touchpad", open))
@@ -348,7 +348,7 @@ function cursorRows(state, moreOpen) {
   if (open) {
     rows.push(toggle("c.resize", true))
     rows.push(slider("c.zoom"))
-    if (zoomed) rows.push(warning("warn.zoom", "", "c.zoom.reset"))
+    if (zoomed) rows.push(warning("caution", "warn.zoom", "", "c.zoom.reset"))
   }
   return rows
 }
@@ -392,4 +392,16 @@ function nextOption(options, current, delta) {
   for (var i = 0; i < options.length; i++) if (String(options[i].value) === String(current)) idx = i
   idx = (idx + delta + options.length) % options.length
   return options[idx].value
+}
+
+var PALETTE_KEYS = ["accent", "red", "yellow", "orange", "green", "cyan", "blue", "magenta"]
+
+function parsePalette(raw) {
+  var out = {}
+  var lines = String(raw || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var match = lines[i].match(/^\s*([a-z_]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})["']?\s*$/)
+    if (match && PALETTE_KEYS.indexOf(match[1]) >= 0) out[match[1]] = match[2]
+  }
+  return out
 }

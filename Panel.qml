@@ -37,9 +37,40 @@ Panel {
   }
   readonly property string glyph: root.activeTab === "touchpad" ? "󰟸" : (root.activeTab === "cursor" ? "󰆽" : "󰍽")
   readonly property color muted: Qt.darker(root.bar.foreground, 1.4)
+  property var palette: ({})
+  readonly property color tint: root.tintFor(root.activeTab)
+  readonly property color caution: root.paletteColor("yellow", Color.accent)
+  readonly property color danger: root.paletteColor("red", Color.urgent)
   readonly property real controlWidth: Math.round(panelColumn.width * 0.56)
 
   Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+
+  FileView {
+    id: themeColors
+    path: Quickshell.env("HOME") + "/.local/state/omarchy/current/theme/colors.toml"
+    printErrors: false
+    onLoaded: root.palette = Model.parsePalette(text())
+  }
+
+  Connections {
+    target: Color
+    function onAccentChanged() { themeColors.reload() }
+  }
+
+  function paletteColor(name, fallback) {
+    var value = root.palette[name]
+    return value ? value : fallback
+  }
+
+  function tintFor(tab) {
+    if (tab === "touchpad") return root.paletteColor("green", Color.accent)
+    if (tab === "cursor") return root.paletteColor("magenta", Color.accent)
+    return root.paletteColor("accent", Color.accent)
+  }
+
+  function soft(c, a) {
+    return Qt.rgba(c.r, c.g, c.b, a)
+  }
 
   function rebuildRows() {
     if (root.dragging) return
@@ -244,6 +275,7 @@ Panel {
   onOpenedChanged: {
     if (!opened) return
     refresh()
+    themeColors.reload()
     root.moreOpen = ({})
     root.focusId = "tab"
     root.selectedIndex = 0
@@ -365,7 +397,7 @@ Panel {
     Text {
       textFormat: Text.PlainText
       text: root.glyph
-      color: root.bar.foreground
+      color: root.tint
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.title
     }
@@ -376,6 +408,7 @@ Panel {
     Segmented {
       width: parent ? parent.width : 0
       sid: "tab"
+      perOptionTint: true
       options: root.translated(parent ? parent.row.options : [])
       fontSize: Style.font.body
       padY: Style.space(6)
@@ -393,7 +426,7 @@ Panel {
       PanelSectionHeader {
         leftPadding: Style.space(6)
         text: strings.t(parent.row.labelKey || "")
-        foreground: root.bar.foreground
+        foreground: root.tint
         fontFamily: root.bar.fontFamily
       }
     }
@@ -423,7 +456,7 @@ Panel {
           id: valueLabel
           textFormat: Text.PlainText
           text: root.sliderLabel(sliderSection.sid, slider.dragging ? slider.liveValue : root.value(sliderSection.sid))
-          color: root.muted
+          color: root.tint
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
@@ -440,6 +473,7 @@ Panel {
         hasCursor: root.hasCursor(sliderSection.sid)
         onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderBox)
         foreground: root.bar.foreground
+        accent: root.tint
         outline: true
 
         PanelSlider {
@@ -452,6 +486,9 @@ Panel {
           maximum: sliderSection.spec.max
           step: sliderSection.spec.step
           integer: sliderSection.spec.integer
+          fillColor: root.tint
+          knobColor: root.tint
+          trackColor: root.soft(root.tint, 0.18)
           value: Number(root.value(sliderSection.sid))
           onMoved: function(v) { root.setValue(sliderSection.sid, v, "live") }
           onReleased: function(v) { root.setValue(sliderSection.sid, v, "apply") }
@@ -502,6 +539,7 @@ Panel {
       height: Math.max(Style.space(30), textCol.implicitHeight + Style.space(8))
       radius: Style.cornerRadius
       foreground: root.bar.foreground
+      accent: root.tint
       hasCursor: root.hasCursor(sid) || area.containsMouse
       onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sw)
 
@@ -529,16 +567,28 @@ Panel {
         }
       }
 
-      ToggleSwitch {
+      Rectangle {
         id: toggle
         anchors.right: parent.right
         anchors.rightMargin: Style.space(6)
         anchors.verticalCenter: parent.verticalCenter
-        checked: sw.checked
-        interactive: false
-        trackHeight: Style.space(16)
-        foreground: root.bar.foreground
-        accent: Color.accent
+        width: Style.space(32)
+        height: Style.space(18)
+        radius: height / 2
+        color: sw.checked ? root.soft(root.tint, 0.3) : root.soft(root.bar.foreground, 0.08)
+        border.width: 1
+        border.color: sw.checked ? root.tint : root.soft(root.bar.foreground, 0.25)
+        Behavior on color { ColorAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic } }
+
+        Rectangle {
+          width: parent.height - Style.space(6)
+          height: width
+          radius: width / 2
+          anchors.verticalCenter: parent.verticalCenter
+          x: sw.checked ? parent.width - width - Style.space(3) : Style.space(3)
+          color: sw.checked ? root.tint : root.muted
+          Behavior on x { NumberAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic } }
+        }
       }
 
       MouseArea {
@@ -573,6 +623,7 @@ Panel {
         anchors.rightMargin: Style.space(6)
         width: root.controlWidth
         showLabel: false
+        accent: root.tint
         fontFamily: root.bar.fontFamily
         options: root.optionList(dd.row.id)
         value: String(root.value(dd.row.id))
@@ -593,6 +644,7 @@ Panel {
       height: Style.space(30)
       radius: Style.cornerRadius
       foreground: root.bar.foreground
+      accent: root.tint
       hasCursor: root.hasCursor(row.id || "") || moreArea.containsMouse
       onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(moreItem)
 
@@ -602,7 +654,7 @@ Panel {
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
         text: (moreItem.row.open ? "\uf078   " : "\uf054   ") + strings.t(moreItem.row.labelKey || "")
-        color: root.muted
+        color: root.tint
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.bodySmall
         font.bold: true
@@ -624,12 +676,13 @@ Panel {
     Rectangle {
       id: warn
       property var row: parent ? parent.row : ({})
+      readonly property color level: row.level === "danger" ? root.danger : root.caution
       width: parent ? parent.width : 0
       height: warnRow.implicitHeight + Style.space(12)
       radius: Style.cornerRadius
-      color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.14)
+      color: root.soft(level, 0.12)
       border.width: 1
-      border.color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.5)
+      border.color: root.soft(level, 0.55)
 
       Row {
         id: warnRow
@@ -644,7 +697,7 @@ Panel {
           id: warnIcon
           textFormat: Text.PlainText
           text: "\uf071"
-          color: Color.urgent
+          color: warn.level
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
           anchors.verticalCenter: parent.verticalCenter
@@ -666,7 +719,8 @@ Panel {
           visible: !!warn.row.action
           text: strings.t("action." + (warn.row.action || ""))
           fontSize: Style.font.caption
-          foreground: root.bar.foreground
+          foreground: warn.level
+          accent: warn.level
           fontFamily: root.bar.fontFamily
           horizontalPadding: Style.spacing.sm
           verticalPadding: Style.space(3)
@@ -710,6 +764,7 @@ Panel {
     property var options: []
     property real fontSize: Style.font.caption
     property real padY: Style.space(4)
+    property bool perOptionTint: false
     columns: Math.max(1, options.length)
     spacing: Style.spacing.xs
     readonly property real cellWidth: (width - spacing * (columns - 1)) / columns
@@ -717,22 +772,46 @@ Panel {
     Repeater {
       model: segmented.options
 
-      Button {
+      Rectangle {
+        id: seg
         required property var modelData
         required property int index
+        readonly property color tone: segmented.perOptionTint ? root.tintFor(modelData.value) : root.tint
+        readonly property bool selected: String(root.value(segmented.sid)) === String(modelData.value)
+        readonly property bool hot: segArea.containsMouse || root.hasCursor(segmented.sid, index)
         width: segmented.cellWidth
-        text: modelData.label
-        fontSize: segmented.fontSize
-        foreground: root.bar.foreground
-        fontFamily: root.bar.fontFamily
-        horizontalPadding: Style.space(4)
-        verticalPadding: segmented.padY
-        bordered: true
-        selected: String(root.value(segmented.sid)) === String(modelData.value)
-        hasCursor: root.hasCursor(segmented.sid, index)
-        onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(this)
-        onClicked: root.setValue(segmented.sid, modelData.value)
-        onHovered: function(isHovered) { if (isHovered) root.focusOn(segmented.sid, index) }
+        implicitHeight: segLabel.implicitHeight + segmented.padY * 2 + 2
+        radius: Style.cornerRadius
+        color: selected ? root.soft(tone, hot ? 0.3 : 0.22) : (hot ? root.soft(tone, 0.1) : "transparent")
+        border.width: 1
+        border.color: selected || hot ? root.soft(tone, selected ? 0.85 : 0.6) : root.soft(root.bar.foreground, 0.18)
+        onHotChanged: if (hot && root.hasCursor(segmented.sid, index)) root.ensureCursorVisible(seg)
+        Behavior on color { ColorAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic } }
+
+        Text {
+          id: segLabel
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(4)
+          anchors.rightMargin: Style.space(4)
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          elide: Text.ElideRight
+          text: seg.modelData.label
+          color: seg.selected ? seg.tone : root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: segmented.fontSize
+          font.bold: seg.selected
+        }
+
+        MouseArea {
+          id: segArea
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: root.focusOn(segmented.sid, seg.index)
+          onClicked: root.setValue(segmented.sid, seg.modelData.value)
+        }
       }
     }
   }
